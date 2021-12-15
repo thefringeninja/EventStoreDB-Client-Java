@@ -1,5 +1,6 @@
 package com.eventstore.dbclient;
 
+import com.eventstore.dbclient.proto.persistentsubscriptions.Persistent;
 import com.eventstore.dbclient.proto.shared.Shared;
 import com.eventstore.dbclient.proto.streams.StreamsOuterClass;
 
@@ -37,7 +38,7 @@ public class SubscriptionFilter {
         return checkpointer;
     }
 
-    void addToWireReadReq(StreamsOuterClass.ReadReq.Options.Builder builder) {
+    void addToWireCreateReq(StreamsOuterClass.ReadReq.Options.Builder builder) {
         RegularFilterExpression regex = filter.getRegularFilterExpression();
         PrefixFilterExpression[] prefixes = filter.getPrefixFilterExpressions();
         Optional<Integer> maxSearchWindow = filter.getMaxSearchWindow();
@@ -83,6 +84,57 @@ public class SubscriptionFilter {
         }
 
         optsB.setCheckpointIntervalMultiplier(this.checkpointIntervalUnsigned);
+
+        builder.setFilter(optsB.build());
+    }
+
+    void addToWirePersistentReadReq(Persistent.CreateReq.AllOptions.Builder builder) {
+        RegularFilterExpression regex = filter.getRegularFilterExpression();
+        PrefixFilterExpression[] prefixes = filter.getPrefixFilterExpressions();
+        Optional<Integer> maxSearchWindow = filter.getMaxSearchWindow();
+
+        if (regex != null && prefixes != null && prefixes.length != 0) {
+            throw new IllegalArgumentException("Regex and Prefix expressions are mutually exclusive");
+        }
+
+        Persistent.CreateReq.AllOptions.FilterOptions.Expression expression = null;
+        if (regex != null) {
+            expression = Persistent.CreateReq.AllOptions.FilterOptions.Expression.newBuilder()
+                    .setRegex(regex.toString())
+                    .build();
+        }
+
+        if (prefixes != null && prefixes.length > 0) {
+           Persistent.CreateReq.AllOptions.FilterOptions.Expression.Builder tmp = Persistent.CreateReq.AllOptions.FilterOptions.Expression.newBuilder();
+
+           Stream.of(prefixes)
+                   .map(Object::toString)
+                   .filter(Objects::nonNull)
+                   .distinct()
+                   .forEach(tmp::addPrefix);
+
+           expression = tmp.build();
+        }
+
+        if (expression == null) {
+            builder.setNoFilter(Shared.Empty.getDefaultInstance());
+            return;
+        }
+
+        Persistent.CreateReq.AllOptions.FilterOptions.Builder optsB = Persistent.CreateReq.AllOptions.FilterOptions.newBuilder();
+        if (filter instanceof StreamFilter) {
+            optsB.setStreamIdentifier(expression);
+        }
+
+        if (filter instanceof EventTypeFilter) {
+            optsB.setEventType(expression);
+        }
+
+        if (maxSearchWindow != null && maxSearchWindow.isPresent()) {
+            optsB.setMax(maxSearchWindow.get());
+        } else {
+            optsB.setCount(Shared.Empty.getDefaultInstance());
+        }
 
         builder.setFilter(optsB.build());
     }
